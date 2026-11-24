@@ -845,11 +845,9 @@ jobs:
   # ─────────────────────────────────────────────────────────────
   # BUILD (macOS)
   #
-  # Apple Silicon only (no Intel/universal). Runs on the same triggers
+  # Apple Silicon (arm64) and Intel (amd64 / x86_64). Runs on the same triggers
   # as build-windows/build-linux (pull_request + workflow_dispatch, see
-  # the top-level `on:` above) - proven green via manual dispatch first,
-  # with the 3rd-party/ccache caches below confirmed to actually hit on
-  # a second run, before being trusted on every PR.
+  # the top-level `on:` above).
   #
   # NOTE: unlike Linux and Windows, macOS uses a single Xcode project
   # (Euro-Office.xcodeproj) for every brand - there's no separate
@@ -861,13 +859,16 @@ jobs:
   # just done locally here instead of through the shared brand-assets job).
   # ─────────────────────────────────────────────────────────────
   build-macos:
-    name: build-macos (${{ matrix.brand.name }})
+    name: build-macos (${{ matrix.arch }}, ${{ matrix.brand.name }})
     # V8 needs Xcode 16's SDK
-    runs-on: macos-15
+    runs-on: ${{ matrix.arch == 'arm64' && 'macos-15' || 'macos-15-intel' }}
     needs: [plan, version, build-common, wait-for-core]
     strategy:
       fail-fast: false
       matrix:
+        arch:
+          - arm64
+          - amd64
         brand: ${{ fromJSON(needs.plan.outputs.brands) }}
     env:
       REPO: ${{ github.workspace }}
@@ -875,7 +876,7 @@ jobs:
       STAGE: ${{ github.workspace }}/macos-stage
       SDK_BUILD_DIR: ${{ github.workspace }}/build-mac-sdk
       CCACHE_DIR: /Users/runner/.ccache
-      DMG_PATH: build/macos/out/${{ matrix.brand.package_name }}-${{ needs.version.outputs.product_version }}-${{ needs.version.outputs.build_number }}-macos-arm64.dmg
+      DMG_PATH: build/macos/out/${{ matrix.brand.package_name }}-${{ needs.version.outputs.product_version }}-${{ needs.version.outputs.build_number }}-macos-${{ matrix.arch == 'arm64' && 'arm64' || 'x86_64' }}.dmg
     steps:
       - name: Checkout fork repository (with submodules)
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -921,18 +922,18 @@ jobs:
         id: thirdparty-cache
         with:
           path: ${{ env.EO_3RDPARTY }}
-          key: ${{ runner.os }}-eo-3rdparty-${{ hashFiles('core/Common/3dParty/**/nc-build.py') }}
+          key: ${{ runner.os }}-eo-3rdparty-${{ matrix.arch }}-${{ hashFiles('core/Common/3dParty/**/nc-build.py') }}
           restore-keys: |
-            ${{ runner.os }}-eo-3rdparty-
+            ${{ runner.os }}-eo-3rdparty-${{ matrix.arch }}-
 
       - name: Restore ccache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ${{ runner.os }}-macos-ccache-${{ matrix.brand.name }}-${{ github.run_id }}
+          key: ${{ runner.os }}-macos-ccache-${{ matrix.brand.name }}-${{ matrix.arch }}-${{ github.run_id }}
           restore-keys: |
-            ${{ runner.os }}-macos-ccache-${{ matrix.brand.name }}-
-            ${{ runner.os }}-macos-ccache-
+            ${{ runner.os }}-macos-ccache-${{ matrix.brand.name }}-${{ matrix.arch }}-
+            ${{ runner.os }}-macos-ccache-${{ matrix.arch }}-
 
       # ---- build + stage + package ---- #
       # Against the prebuilt core when the build cache has it, see
@@ -953,7 +954,7 @@ jobs:
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ${{ runner.os }}-macos-ccache-${{ matrix.brand.name }}-${{ github.run_id }}
+          key: ${{ runner.os }}-macos-ccache-${{ matrix.brand.name }}-${{ matrix.arch }}-${{ github.run_id }}
 
       - name: Stage the build
         run: |
@@ -983,6 +984,7 @@ jobs:
         run: |
           xcodebuild -project "${{ matrix.brand.xcode_project }}" \
             -scheme "${{ matrix.brand.xcode_scheme }}" -configuration Release \
+            ARCHS="${{ matrix.arch == 'arm64' && 'arm64' || 'x86_64' }}" \
             EO_MAC_STAGE_DIR="${STAGE}" \
             CONFIGURATION_BUILD_DIR="${REPO}/build/macos/out" \
             PRODUCT_NAME="${{ matrix.brand.product_name }}" \
@@ -998,7 +1000,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: macos-packages-${{ matrix.brand.name }}-arm64
+          name: macos-packages-${{ matrix.brand.name }}-${{ matrix.arch }}
           path: ${{ env.DMG_PATH }}
           # Kept longer on tags for the publish jobs and the manual signing.
           retention-days: ${{ startsWith(github.ref, 'refs/tags/') && 30 || 7 }}

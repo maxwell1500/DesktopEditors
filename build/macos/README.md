@@ -18,8 +18,8 @@ onto a built `desktop-sdk` tree and generating fonts/theme thumbnails. It does
   and `pkg-config` — needed by vcpkg's `hunspell` port.
 - The submodules checked out (see the [overview](../README.md#prerequisites-all-platforms)),
   including `core-fonts`.
-- Docker, for building the [common payload](../README.md#the-common-payload-again)
-  locally. Use `type=tar`, not the default `type=local` — `type=local` is known
+- Docker (or Colima/OrbStack), for building the [common payload](../README.md#the-common-payload-again)
+  locally (alternatively, download and extract the `common-files-euro-office` artifact from a CI run into `build/deploy/common`). Use `type=tar`, not the default `type=local` — `type=local` is known
   to hang indefinitely on Docker Desktop's macOS/virtiofs backend for this many
   small files (confirmed stuck, not just slow), and `type=tar` is also what CI
   already uses:
@@ -75,10 +75,11 @@ STAGE=/path/to/staging-root  # arbitrary, doesn't need to exist yet - step 1 cre
    before `xcodebuild` — patches `NSHumanReadableCopyright`/`CFBundleName`/
    `CFBundleShortVersionString`. Use different `--company-name`/`--product-name`
    values to build a different brand (e.g. nextcloud-office).
-4. **Build the Xcode project**, pointed at the staged tree:
+4. **Build the app bundle** — either with Xcode:
    ```bash
    xcodebuild -project "${REPO}/desktop-apps/macos/Euro-Office.xcodeproj" \
      -scheme Euro-Office-arm -configuration Release \
+     ARCHS="$(uname -m)" \
      EO_MAC_STAGE_DIR="${STAGE}" \
      CONFIGURATION_BUILD_DIR="${REPO}/build/macos/out" \
      build
@@ -86,6 +87,17 @@ STAGE=/path/to/staging-root  # arbitrary, doesn't need to exist yet - step 1 cre
    `Euro-Office.app` lands directly at `${REPO}/build/macos/out/Euro-Office.app` —
    without `CONFIGURATION_BUILD_DIR`, Xcode uses its default DerivedData
    location instead (`~/Library/Developer/Xcode/DerivedData/Euro-Office-<hash>/Build/Products/<configuration>/`).
+
+   **Without full Xcode (Command Line Tools only):** use `desktop-apps/macos/CMakeLists.txt`
+   and supply precompiled `.storyboardc` bundles, `Assets.car`, and `AppIcon.icns`
+   (e.g. from an existing `Euro-Office.app/Contents/Resources`):
+   ```bash
+   cmake -G Ninja -S "${REPO}/desktop-apps/macos" -B "${REPO}/build/macos/out" \
+     -DCMAKE_BUILD_TYPE=Release \
+     -DEO_MAC_STAGE_DIR="${STAGE}" \
+     -DEO_MAC_PRECOMPILED_RESOURCES_DIR=/path/to/precompiled-Resources
+   cmake --build "${REPO}/build/macos/out"
+   ```
 5. **(Optional) Package a DMG installer** — `make-dmg.sh` packages the built
    `.app` into a distributable `.dmg` (app + `/Applications` symlink,
    background graphic), using [`appdmg`](https://github.com/LinusU/node-appdmg)
@@ -95,7 +107,7 @@ STAGE=/path/to/staging-root  # arbitrary, doesn't need to exist yet - step 1 cre
    ```bash
    "${REPO}/build/macos/make-dmg.sh" \
      --app "${REPO}/build/macos/out/Euro-Office.app" \
-     --output "${REPO}/build/macos/out/Euro-Office-DesktopEditors-9.3.5-1-macos-arm64.dmg"
+     --output "${REPO}/build/macos/out/Euro-Office-DesktopEditors-$(cat "${REPO}/VERSION.txt")-1-macos-$(uname -m).dmg"
    ```
 
 ## What `stage.sh` does
